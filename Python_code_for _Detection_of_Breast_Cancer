@@ -1,0 +1,213 @@
+# Import necessary libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, KBinsDiscretizer
+from sklearn.decomposition import PCA
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+from sklearn.linear_model import LogisticRegression
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from imblearn.over_sampling import SMOTE
+
+# Load the dataset
+url = "https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data"
+columns = ['id', 'diagnosis', 'radius_mean', 'texture_mean', 'perimeter_mean',
+           'area_mean', 'smoothness_mean', 'compactness_mean', 'concavity_mean',
+           'concave points_mean', 'symmetry_mean', 'fractal_dimension_mean',
+           'radius_se', 'texture_se', 'perimeter_se', 'area_se', 'smoothness_se',
+           'compactness_se', 'concavity_se', 'concave points_se', 'symmetry_se',
+           'fractal_dimension_se', 'radius_worst', 'texture_worst',
+           'perimeter_worst', 'area_worst', 'smoothness_worst',
+           'compactness_worst', 'concavity_worst', 'concave points_worst',
+           'symmetry_worst', 'fractal_dimension_worst']
+df = pd.read_csv(url, header=None, names=columns)
+
+# Data Preprocessing
+df.drop('id', axis=1, inplace=True)
+df['diagnosis'] = df['diagnosis'].map({'M': 1, 'B': 0})
+X = df.drop('diagnosis', axis=1)
+y = df['diagnosis']
+
+# Standardize the features before splitting
+scaler_initial = StandardScaler()
+X_scaled = scaler_initial.fit_transform(X)
+
+# Split the data into training+validation and test sets (85% / 15%)
+X_temp, X_test, y_temp, y_test = train_test_split(X_scaled, y, test_size=0.15, random_state=42)
+
+# Split the temp set into training and validation sets (70% / 15% of total)
+X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1765, random_state=42)
+
+# Discretize the features using KBinsDiscretizer
+discretizer = KBinsDiscretizer(n_bins=10, encode='ordinal', strategy='uniform')
+X_train_discretized = discretizer.fit_transform(X_train)
+X_val_discretized = discretizer.transform(X_val)
+X_test_discretized = discretizer.transform(X_test)
+
+# Resampling the training data using SMOTE
+smote = SMOTE(random_state=42)
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train_discretized, y_train)
+
+# Standardize the resampled training features
+scaler = StandardScaler()
+X_train_resampled_scaled = scaler.fit_transform(X_train_resampled)
+X_val_scaled = scaler.transform(X_val_discretized)
+X_test_scaled = scaler.transform(X_test_discretized)
+
+# Apply PCA
+pca = PCA(n_components=10)
+X_train_pca = pca.fit_transform(X_train_resampled_scaled)
+X_val_pca = pca.transform(X_val_scaled)
+X_test_pca = pca.transform(X_test_scaled)
+
+# Displaying PCA components and explained variance
+components = pca.components_
+explained_variance = pca.explained_variance_ratio_
+
+for i, (component, variance) in enumerate(zip(components, explained_variance)):
+    print(f"Principal Component {i+1}:")
+    print(f" - Weights: {component}")
+    print(f" - Explained Variance: {variance:.4f}")
+    print()
+
+# Plotting PCA explained variance
+plt.figure(figsize=(10, 6))
+plt.bar(range(1, len(explained_variance) + 1), explained_variance, alpha=0.5, align='center', label='Individual explained variance')
+plt.step(range(1, len(explained_variance) + 1), np.cumsum(explained_variance), where='mid', label='Cumulative explained variance')
+plt.ylabel('Explained variance ratio')
+plt.xlabel('Principal component index')
+plt.legend(loc='best')
+plt.title('PCA Explained Variance')
+plt.show()
+
+# Visualizing the first two principal components
+plt.figure(figsize=(10, 6))
+plt.scatter(X_train_pca[:,0], X_train_pca[:,1], c=y_train_resampled, cmap=plt.cm.viridis, edgecolor='k')
+plt.xlabel('First principal component')
+plt.ylabel('Second principal component')
+plt.title('PCA of Breast Cancer Dataset (First Two Components)')
+plt.colorbar()
+plt.show()
+
+# Visualizing Pairplot of all 10 principal components
+pca_df = pd.DataFrame(X_train_pca[:, :10], columns=[f'PC{i+1}' for i in range(10)])
+pca_df['diagnosis'] = y_train_resampled
+
+g = sns.pairplot(pca_df, hue='diagnosis', palette='viridis', markers=['o', 's'])
+g.fig.suptitle("Pairplot of the First 10 Principal Components", y=1.02)
+plt.show()
+
+# Models dictionary
+models = {
+    "Logistic Regression": LogisticRegression(),
+    "Linear Discriminant Analysis": LinearDiscriminantAnalysis(),
+    "Decision Tree": DecisionTreeClassifier(random_state=42),
+    "K-Nearest Neighbors": KNeighborsClassifier(),
+    "Naive Bayes": GaussianNB(),
+    "Support Vector Machine": SVC()
+}
+
+# Train and evaluate models
+results = []
+confusion_matrices = {}
+classification_reports = {}
+
+for name, model in models.items():
+    model.fit(X_train_pca, y_train_resampled)
+    y_val_pred = model.predict(X_val_pca)
+    accuracy = accuracy_score(y_val, y_val_pred)
+    precision = precision_score(y_val, y_val_pred)
+    recall = recall_score(y_val, y_val_pred)
+    f1 = f1_score(y_val, y_val_pred)
+    results.append({
+        "Model": name,
+        "Accuracy": accuracy,
+        "Precision": precision,
+        "Recall": recall,
+        "F1 Score": f1
+    })
+    confusion_matrices[name] = confusion_matrix(y_val, y_val_pred)
+    classification_reports[name] = classification_report(y_val, y_val_pred, target_names=['Benign', 'Malignant'], output_dict=True)
+
+# Validation metrics
+print("Model Performance Metrics:")
+for result in results:
+    print(f"{result['Model']}: Accuracy={result['Accuracy']:.4f}, Precision={result['Precision']:.4f}, Recall={result['Recall']:.4f}, F1 Score={result['F1 Score']:.4f}")
+
+# Convert results to DataFrame for visualization
+results_df = pd.DataFrame(results)
+
+# Plotting graphs
+fig, axes = plt.subplots(nrows=3, ncols=2, figsize=(15, 15))
+sns.set(style="whitegrid")
+
+# Count of diagnoses
+diagnosis_counts = df['diagnosis'].value_counts().sort_index()
+sns.barplot(x=diagnosis_counts.index, y=diagnosis_counts.values, ax=axes[0, 0], palette='viridis')
+axes[0, 0].set_title('Diagnosis Count (0 = Benign, 1 = Malignant)')
+axes[0, 0].set_xlabel('Diagnosis')
+axes[0, 0].set_ylabel('Count')
+
+# Accuracy of each model
+sns.barplot(x='Accuracy', y='Model', data=results_df, ax=axes[0, 1], palette='viridis')
+axes[0, 1].set_title('Model Accuracy')
+axes[0, 1].set_xlabel('Accuracy')
+
+# Precision of each model
+sns.barplot(x='Precision', y='Model', data=results_df, ax=axes[1, 0], palette='viridis')
+axes[1, 0].set_title('Model Precision')
+axes[1, 0].set_xlabel('Precision')
+
+# Recall of each model
+sns.barplot(x='Recall', y='Model', data=results_df, ax=axes[1, 1], palette='viridis')
+axes[1, 1].set_title('Model Recall')
+axes[1, 1].set_xlabel('Recall')
+
+# F1 Score of each model
+sns.barplot(x='F1 Score', y='Model', data=results_df, ax=axes[2, 0], palette='viridis')
+axes[2, 0].set_title('Model F1 Score')
+axes[2, 0].set_xlabel('F1 Score')
+
+# Hide the empty subplot (3rd row, 2nd column)
+axes[2, 1].axis('off')
+
+# Adjust layout
+plt.tight_layout()
+
+# Save and show the plots
+plt.savefig('ml_model_comparison_plots.png')
+plt.show()
+
+# Heatmap of the entire dataset
+plt.figure(figsize=(16, 12))
+sns.heatmap(df.corr(), annot=True, fmt='.2f', cmap='coolwarm', cbar=True)
+plt.title('Heatmap of Feature Correlations in the Dataset')
+plt.show()
+
+# Heatmaps and classification reports for each model
+for name, matrix in confusion_matrices.items():
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(matrix, annot=True, fmt='d', cmap='coolwarm', cbar=False, xticklabels=['Benign', 'Malignant'], yticklabels=['Benign', 'Malignant'])
+    plt.title(f'Confusion Matrix - {name}')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.show()
+
+    report_df = pd.DataFrame(classification_reports[name]).transpose()
+    print(f"Classification Report for {name}:\n", report_df)
+
+# Final evaluation on test set
+print("\nFinal Evaluation on Test Set:")
+for name, model in models.items():
+    y_test_pred = model.predict(X_test_pca)
+    accuracy = accuracy_score(y_test, y_test_pred)
+    precision = precision_score(y_test, y_test_pred)
+    recall = recall_score(y_test, y_test_pred)
+    f1 = f1_score(y_test, y_test_pred)
+    print(f"{name}: Accuracy={accuracy:.4f}, Precision={precision:.4f}, Recall={recall:.4f}, F1 Score={f1:.4f}")
